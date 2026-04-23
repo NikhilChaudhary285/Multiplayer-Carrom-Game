@@ -1,14 +1,9 @@
-﻿using System;
-using System.Collections;
+﻿using SocketIOClient;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
-using SocketIOClient;
+using static UnityEngine.Audio.ProcessorInstance;
 
-/// <summary>
-/// Core networking manager for Carrom multiplayer.
-/// Attach to a persistent GameObject in your scene.
-/// Compatible with SocketIOUnity latest versions.
-/// </summary>
 public class CarromNetworkManager : MonoBehaviour
 {
     public static CarromNetworkManager Instance { get; private set; }
@@ -18,7 +13,6 @@ public class CarromNetworkManager : MonoBehaviour
 
     private SocketIOUnity _socket;
 
-    // Events — subscribe from other scripts
     public event Action<RoomCreatedData> OnRoomCreated;
     public event Action<RoomJoinedData> OnRoomJoined;
     public event Action<PlayersData> OnPlayerJoined;
@@ -28,173 +22,298 @@ public class CarromNetworkManager : MonoBehaviour
     public event Action<GameOverData> OnGameOver;
     public event Action<string> OnError;
 
-    // Local state
     public string MySocketId { get; private set; }
     public string CurrentRoomId { get; private set; }
     public bool IsMyTurn { get; private set; }
 
-    // Thread-safe queue to push socket callbacks onto Unity main thread
     private readonly Queue<Action> _mainThreadQueue = new Queue<Action>();
 
     private void Awake()
     {
-        if (Instance != null) { Destroy(gameObject); return; }
+        Debug.Log("[NetworkManager:Awake] Initializing singleton");
+        if (Instance != null)
+        {
+            Debug.LogWarning("[NetworkManager:Awake] Duplicate instance found — destroying this one");
+            Destroy(gameObject);
+            return;
+        }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+        Debug.Log("[NetworkManager:Awake] Singleton set, DontDestroyOnLoad applied");
     }
 
-    private void Start() => Connect();
+    private void Start()
+    {
+        Debug.Log("[NetworkManager:Start] Calling Connect()");
+        Connect();
+    }
 
-    // Flush queued callbacks on main thread every frame
     private void Update()
     {
         lock (_mainThreadQueue)
         {
             while (_mainThreadQueue.Count > 0)
-                _mainThreadQueue.Dequeue()?.Invoke();
+            {
+                var action = _mainThreadQueue.Dequeue();
+                action?.Invoke();
+            }
         }
     }
 
-    // Helper — enqueue any action to run on main thread
     private void RunOnMainThread(Action action)
     {
         lock (_mainThreadQueue)
             _mainThreadQueue.Enqueue(action);
     }
 
-    // ─────────────────────────────────────────
-    // CONNECTION
-    // ─────────────────────────────────────────
+    // ── CONNECTION ──
 
     public void Connect()
     {
+        Debug.Log($"[NetworkManager:Connect] Attempting connection to: {serverUrl}");
         var uri = new Uri(serverUrl);
         _socket = new SocketIOUnity(uri, new SocketIOOptions
         {
             Transport = SocketIOClient.Transport.TransportProtocol.WebSocket,
-            EIO = EngineIO.V4   // ← Fixed: use enum instead of int
+            EIO = EngineIO.V4
         });
 
         _socket.OnConnected += (sender, e) =>
         {
             MySocketId = _socket.Id;
-            Debug.Log($"✅ Connected to server. ID: {MySocketId}");
+            Debug.Log($"[NetworkManager:OnConnected] ✅ Connected! SocketId={MySocketId}");
         };
 
         _socket.OnDisconnected += (sender, e) =>
         {
-            Debug.Log("❌ Disconnected from server");
+            Debug.LogWarning($"[NetworkManager:OnDisconnected] ❌ Disconnected from server. Reason: {e}");
+        };
+
+        _socket.OnError += (sender, e) =>
+        {
+            Debug.LogError($"[NetworkManager:OnError] Socket error: {e}");
+        };
+
+        _socket.OnReconnected += (sender, e) =>
+        {
+            Debug.Log($"[NetworkManager:OnReconnected] Reconnected after {e} attempts");
         };
 
         RegisterEvents();
+
+        Debug.Log("[NetworkManager:Connect] Registered all events — calling _socket.Connect()");
         _socket.Connect();
     }
 
-    // ─────────────────────────────────────────
-    // REGISTER SOCKET EVENTS
-    // ─────────────────────────────────────────
+    // ── REGISTER SOCKET EVENTS ──
 
     private void RegisterEvents()
     {
+        Debug.Log("[NetworkManager:RegisterEvents] Registering all socket event listeners");
+
         _socket.On("room_created", response =>
         {
-            var data = response.GetValue<RoomCreatedData>();
-            CurrentRoomId = data.roomId;
-            RunOnMainThread(() => OnRoomCreated?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:room_created] Raw response: {json}");
+            try
+            {
+                var data = JsonUtility.FromJson<RoomCreatedData>(json);
+                CurrentRoomId = data.roomId;
+                Debug.Log($"[NetworkManager:room_created] Parsed — roomId={data.roomId} betAmount={data.betAmount} playerId={data.player?.id}");
+                RunOnMainThread(() => OnRoomCreated?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:room_created] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("room_joined", response =>
         {
-            var data = response.GetValue<RoomJoinedData>();
-            CurrentRoomId = data.roomId;
-            RunOnMainThread(() => OnRoomJoined?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:room_joined] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<RoomJoinedData>(json);
+                CurrentRoomId = data.roomId;
+                Debug.Log($"[NetworkManager:room_joined] Parsed — roomId={data.roomId} betAmount={data.betAmount}");
+                RunOnMainThread(() => OnRoomJoined?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:room_joined] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("player_joined", response =>
         {
-            var data = response.GetValue<PlayersData>();
-            RunOnMainThread(() => OnPlayerJoined?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:player_joined] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<PlayersData>(json);
+                Debug.Log($"[NetworkManager:player_joined] Players in room: {data.players?.Count}");
+                RunOnMainThread(() => OnPlayerJoined?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:player_joined] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("game_start", response =>
         {
-            var data = response.GetValue<GameStartData>();
-            IsMyTurn = data.currentTurn == MySocketId;
-            RunOnMainThread(() => OnGameStart?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:game_start] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<GameStartData>(json);
+                IsMyTurn = data.currentTurn == MySocketId;
+                Debug.Log($"[NetworkManager:game_start] currentTurn={data.currentTurn} MySocketId={MySocketId} IsMyTurn={IsMyTurn} winScore={data.winScore} betAmount={data.betAmount}");
+                Debug.Log($"[NetworkManager:game_start] Board pieces count: {data.boardState?.pieces?.Count}");
+                RunOnMainThread(() => OnGameStart?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:game_start] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("shot_fired", response =>
         {
-            var data = response.GetValue<ShotFiredData>();
-            // Only apply opponent's shot (we already applied ours locally)
-            if (data.playerId != MySocketId)
-                RunOnMainThread(() => OnShotFired?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:shot_fired] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<ShotFiredData>(json);
+                Debug.Log($"[NetworkManager:shot_fired] playerId={data.playerId} angle={data.angle} power={data.power} isOpponent={data.playerId != MySocketId}");
+                if (data.playerId != MySocketId)
+                {
+                    Debug.Log("[NetworkManager:shot_fired] Dispatching opponent shot to main thread");
+                    RunOnMainThread(() => OnShotFired?.Invoke(data));
+                }
+                else
+                {
+                    Debug.Log("[NetworkManager:shot_fired] Shot is mine — skipping (already applied locally)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:shot_fired] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("turn_update", response =>
         {
-            var data = response.GetValue<TurnUpdateData>();
-            IsMyTurn = data.currentTurn == MySocketId;
-            RunOnMainThread(() => OnTurnUpdate?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:turn_update] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<TurnUpdateData>(json);
+                IsMyTurn = data.currentTurn == MySocketId;
+                Debug.Log($"[NetworkManager:turn_update] currentTurn={data.currentTurn} IsMyTurn={IsMyTurn}");
+                if (data.scores != null)
+                    foreach (var s in data.scores)
+                        Debug.Log($"[NetworkManager:turn_update] Score — {s.name}: {s.score}");
+                RunOnMainThread(() => OnTurnUpdate?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:turn_update] Parse error: {ex.Message}");
+            }
         });
 
         _socket.On("game_over", response =>
         {
-            var data = response.GetValue<GameOverData>();
-            RunOnMainThread(() => OnGameOver?.Invoke(data));
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:game_over] Raw response: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<GameOverData>(json);
+                Debug.Log($"[NetworkManager:game_over] winnerId={data.winnerId} winnerName={data.winnerName} totalPot={data.totalPot} message={data.message}");
+                RunOnMainThread(() => OnGameOver?.Invoke(data));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:game_over] Parse error: {ex.Message}");
+            }
+        });
+
+        _socket.On("board_sync", response =>
+        {
+            var json = response.ToString().Trim('[', ']');
+            Debug.Log($"[NetworkManager:board_sync] Received board sync");
         });
 
         _socket.On("error", response =>
         {
-            var msg = response.GetValue<ErrorData>().message;
-            RunOnMainThread(() => OnError?.Invoke(msg));
+            var json = response.ToString().Trim('[', ']');
+            Debug.LogError($"[NetworkManager:error] Raw: {response}");
+            try
+            {
+                var data = JsonUtility.FromJson<ErrorData>(json);
+                Debug.LogError($"[NetworkManager:error] Server error message: {data.message}");
+                RunOnMainThread(() => OnError?.Invoke(data.message));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NetworkManager:error] Parse error: {ex.Message}");
+            }
         });
+
+        Debug.Log("[NetworkManager:RegisterEvents] All events registered ✅");
     }
 
-    // ─────────────────────────────────────────
-    // EMIT METHODS (called from game scripts)
-    // ─────────────────────────────────────────
+    // ── EMIT METHODS ──
 
     public void CreateRoom(string playerName, int betAmount)
     {
+        Debug.Log($"[NetworkManager:CreateRoom] Emitting create_room — playerName={playerName} betAmount={betAmount}");
         _socket.Emit("create_room", new { playerName, betAmount });
     }
 
     public void JoinRoom(string roomId, string playerName, int betAmount)
     {
+        Debug.Log($"[NetworkManager:JoinRoom] Emitting join_room — roomId={roomId} playerName={playerName} betAmount={betAmount}");
         _socket.Emit("join_room", new { roomId, playerName, betAmount });
     }
 
     public void SendShot(float angle, float power)
     {
-        if (!IsMyTurn) return;
+        Debug.Log($"[NetworkManager:SendShot] IsMyTurn={IsMyTurn} angle={angle} power={power}");
+        if (!IsMyTurn)
+        {
+            Debug.LogWarning("[NetworkManager:SendShot] Blocked — not my turn!");
+            return;
+        }
         _socket.Emit("striker_shot", new { angle, power });
+        Debug.Log("[NetworkManager:SendShot] striker_shot emitted ✅");
     }
 
     public void SendShotResult(List<string> pocketedPieceIds, bool strikerPocketed)
     {
+        Debug.Log($"[NetworkManager:SendShotResult] pocketedPieces={string.Join(",", pocketedPieceIds)} strikerPocketed={strikerPocketed}");
         _socket.Emit("shot_result", new { pocketedPieces = pocketedPieceIds, strikerPocketed });
+        Debug.Log("[NetworkManager:SendShotResult] shot_result emitted ✅");
     }
 
     public void RequestSync()
     {
+        Debug.Log("[NetworkManager:RequestSync] Emitting request_sync");
         _socket.Emit("request_sync");
     }
 
     private void OnDestroy()
     {
+        Debug.Log("[NetworkManager:OnDestroy] Disconnecting socket");
         _socket?.Disconnect();
     }
 }
 
-// ─────────────────────────────────────────────
-// DATA MODELS (match server JSON exactly)
-// ─────────────────────────────────────────────
-
 [Serializable] public class RoomCreatedData { public string roomId; public PlayerData player; public int betAmount; }
 [Serializable] public class RoomJoinedData { public string roomId; public PlayerData player; public int betAmount; }
 [Serializable] public class PlayersData { public List<PlayerData> players; }
-[Serializable] public class PlayerData { public string id; public string name; public int score; public bool isHost; }
+[Serializable] public class PlayerData { public string id; public string name; public int coins; public int score; public bool isHost; }
 [Serializable] public class GameStartData { public string currentTurn; public List<PlayerData> players; public BoardStateData boardState; public int betAmount; public int winScore; }
 [Serializable] public class ShotFiredData { public string playerId; public float angle; public float power; }
 [Serializable] public class TurnUpdateData { public string currentTurn; public List<PlayerData> scores; public BoardStateData boardState; }

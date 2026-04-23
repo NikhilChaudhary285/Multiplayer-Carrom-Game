@@ -2,45 +2,55 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Handles striker drag-aim-flick mechanic.
-/// Attach to the Striker GameObject.
-/// </summary>
 [RequireComponent(typeof(Rigidbody2D), typeof(CircleCollider2D))]
 public class StrikerController : MonoBehaviour
 {
     [Header("Shot Settings")]
     [SerializeField] private float maxPower = 800f;
     [SerializeField] private float maxDragDistance = 2f;
-    [SerializeField] private LineRenderer aimLine;  // drag in Inspector
-    [SerializeField] private Transform strikerSlideArea; // horizontal slide zone
+    [SerializeField] private LineRenderer aimLine;
+    [SerializeField] private Transform strikerSlideArea;
 
     private Rigidbody2D _rb;
     private Vector2 _dragStart;
     private bool _isDragging = false;
     private bool _shotFired = false;
     private bool _canShoot = false;
+    private bool _isHost = false;
 
-    // Pocketed tracking this turn
     private List<string> _pocketedThisTurn = new List<string>();
     private bool _strikerPocketed = false;
 
-    // Board reference
     [SerializeField] private CarromBoard boardRef;
 
-    private void Awake() => _rb = GetComponent<Rigidbody2D>();
+    private void Awake()
+    {
+        _rb = GetComponent<Rigidbody2D>();
+        Debug.Log($"[StrikerController:Awake] Rigidbody2D found={_rb != null}");
+        if (aimLine == null) Debug.LogWarning("[StrikerController:Awake] aimLine is not assigned in Inspector!");
+    }
 
     private void Start()
     {
-        // Subscribe to network events
+        Debug.Log("[StrikerController:Start] Subscribing to network events");
+        if (CarromNetworkManager.Instance == null)
+        {
+            Debug.LogError("[StrikerController:Start] ❌ CarromNetworkManager.Instance is NULL!");
+            return;
+        }
         CarromNetworkManager.Instance.OnGameStart += OnGameStart;
         CarromNetworkManager.Instance.OnShotFired += OnOpponentShot;
         CarromNetworkManager.Instance.OnTurnUpdate += OnTurnUpdate;
+        Debug.Log("[StrikerController:Start] Events subscribed ✅");
     }
 
     private void OnGameStart(GameStartData data)
     {
-        _canShoot = data.currentTurn == CarromNetworkManager.Instance.MySocketId;
+        string myId = CarromNetworkManager.Instance.MySocketId;
+        _canShoot = data.currentTurn == myId;
+        var me = data.players?.Find(p => p.id == myId);
+        _isHost = me != null && me.isHost;
+        Debug.Log($"[StrikerController:OnGameStart] myId={myId} currentTurn={data.currentTurn} _canShoot={_canShoot} _isHost={_isHost}");
         ResetStriker();
     }
 
@@ -50,12 +60,9 @@ public class StrikerController : MonoBehaviour
         _shotFired = false;
         _pocketedThisTurn.Clear();
         _strikerPocketed = false;
+        Debug.Log($"[StrikerController:OnTurnUpdate] currentTurn={data.currentTurn} _canShoot={_canShoot} — resetting striker");
         ResetStriker();
     }
-
-    // ─────────────────────────────────────────
-    // INPUT HANDLING
-    // ─────────────────────────────────────────
 
     private void Update()
     {
@@ -69,11 +76,17 @@ public class StrikerController : MonoBehaviour
     private void OnDragStart()
     {
         Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        // Only start drag if clicking near striker
-        if (Vector2.Distance(mousePos, transform.position) < 0.5f)
+        float dist = Vector2.Distance(mousePos, transform.position);
+        Debug.Log($"[StrikerController:OnDragStart] mousePos={mousePos} strikerPos={transform.position} dist={dist:F3}");
+        if (dist < 0.5f)
         {
             _dragStart = mousePos;
             _isDragging = true;
+            Debug.Log("[StrikerController:OnDragStart] Drag started ✅");
+        }
+        else
+        {
+            Debug.Log("[StrikerController:OnDragStart] Click too far from striker — ignored");
         }
     }
 
@@ -83,7 +96,6 @@ public class StrikerController : MonoBehaviour
         Vector2 dragDir = _dragStart - mousePos;
         float dragDist = Mathf.Clamp(dragDir.magnitude, 0, maxDragDistance);
 
-        // Show aim line
         if (aimLine != null)
         {
             aimLine.enabled = true;
@@ -101,99 +113,98 @@ public class StrikerController : MonoBehaviour
         Vector2 dragDir = _dragStart - mousePos;
         float dragDist = Mathf.Clamp(dragDir.magnitude, 0, maxDragDistance);
 
-        if (dragDist < 0.05f) return; // too small, ignore
+        Debug.Log($"[StrikerController:OnDragRelease] dragDist={dragDist:F3} maxDrag={maxDragDistance}");
 
-        float power = dragDist / maxDragDistance;           // 0–1
-        float angle = Mathf.Atan2(dragDir.y, dragDir.x) * Mathf.Rad2Deg; // degrees
+        if (dragDist < 0.05f)
+        {
+            Debug.LogWarning("[StrikerController:OnDragRelease] Drag too small — shot ignored");
+            return;
+        }
 
+        float power = dragDist / maxDragDistance;
+        float angle = Mathf.Atan2(dragDir.y, dragDir.x) * Mathf.Rad2Deg;
+        Debug.Log($"[StrikerController:OnDragRelease] power={power:F3} angle={angle:F2}deg — firing!");
         FireStriker(angle, power);
     }
 
-    // ─────────────────────────────────────────
-    // FIRE SHOT
-    // ─────────────────────────────────────────
-
     private void FireStriker(float angle, float power)
     {
+        Debug.Log($"[StrikerController:FireStriker] angle={angle:F2} power={power:F3} maxPower={maxPower}");
         _shotFired = true;
         _canShoot = false;
 
         Vector2 direction = new Vector2(Mathf.Cos(angle * Mathf.Deg2Rad), Mathf.Sin(angle * Mathf.Deg2Rad));
+        Debug.Log($"[StrikerController:FireStriker] Applying force direction={direction} magnitude={power * maxPower}");
         _rb.AddForce(direction * power * maxPower);
 
-        // Send to server
         CarromNetworkManager.Instance.SendShot(angle, power);
-
-        // Start watching for pieces settling
+        Debug.Log("[StrikerController:FireStriker] Shot sent to server — starting settle coroutine");
         StartCoroutine(WaitForShotSettle());
     }
 
-    // ─────────────────────────────────────────
-    // OPPONENT SHOT (received from server)
-    // ─────────────────────────────────────────
-
     private void OnOpponentShot(ShotFiredData data)
     {
+        Debug.Log($"[StrikerController:OnOpponentShot] Applying opponent shot — angle={data.angle} power={data.power}");
         Vector2 direction = new Vector2(
             Mathf.Cos(data.angle * Mathf.Deg2Rad),
             Mathf.Sin(data.angle * Mathf.Deg2Rad)
         );
         _rb.AddForce(direction * data.power * maxPower);
+        Debug.Log("[StrikerController:OnOpponentShot] Force applied — starting settle coroutine");
         StartCoroutine(WaitForShotSettle());
     }
 
-    // ─────────────────────────────────────────
-    // WAIT FOR ALL PHYSICS TO SETTLE
-    // ─────────────────────────────────────────
-
     private IEnumerator WaitForShotSettle()
     {
-        yield return new WaitForSeconds(0.5f); // small delay
+        Debug.Log("[StrikerController:WaitForShotSettle] Waiting 0.5s initial delay...");
+        yield return new WaitForSeconds(0.5f);
 
         float settleTimer = 0f;
         float settleTimeout = 5f;
+        int frameCount = 0;
 
+        Debug.Log("[StrikerController:WaitForShotSettle] Starting settle poll loop (timeout=5s)");
         while (settleTimer < settleTimeout)
         {
             if (AllPiecesSettled())
+            {
+                Debug.Log($"[StrikerController:WaitForShotSettle] All pieces settled after {settleTimer:F2}s ({frameCount} frames)");
                 break;
+            }
             settleTimer += Time.deltaTime;
+            frameCount++;
             yield return null;
         }
 
-        // Report result to server (only the current turn player reports)
-        if (CarromNetworkManager.Instance.MySocketId != null)
-        {
-            // Only host-side reports to avoid double-reporting
-            // In real game: both clients calculate, server trusts one
-            CarromNetworkManager.Instance.SendShotResult(_pocketedThisTurn, _strikerPocketed);
-        }
+        if (settleTimer >= settleTimeout)
+            Debug.LogWarning($"[StrikerController:WaitForShotSettle] ⚠️ Settle TIMEOUT reached! Pieces may still be moving.");
+
+        Debug.Log($"[StrikerController:WaitForShotSettle] Reporting result — pocketed={string.Join(",", _pocketedThisTurn)} strikerPocketed={_strikerPocketed}");
+        CarromNetworkManager.Instance.SendShotResult(_pocketedThisTurn, _strikerPocketed);
     }
 
     private bool AllPiecesSettled()
     {
-        // Check if all rigidbodies on board have near-zero velocity
-        //var pieces = FindObjectsOfType<CarromPiece>();
         var pieces = FindObjectsByType<CarromPiece>(FindObjectsSortMode.None);
         foreach (var p in pieces)
         {
-            if (p.GetComponent<Rigidbody2D>().linearVelocity.magnitude > 0.05f)
+            var rb = p.GetComponent<Rigidbody2D>();
+            if (rb != null && rb.linearVelocity.magnitude > 0.05f)
                 return false;
         }
-        return _rb.linearVelocity.magnitude < 0.05f;
+        bool strikerSettled = _rb.linearVelocity.magnitude < 0.05f;
+        return strikerSettled;
     }
-
-    // ─────────────────────────────────────────
-    // POCKET DETECTION (called by PocketTrigger)
-    // ─────────────────────────────────────────
 
     public void ReportPiecePocketed(string pieceId)
     {
+        Debug.Log($"[StrikerController:ReportPiecePocketed] pieceId={pieceId}");
         _pocketedThisTurn.Add(pieceId);
     }
 
     public void ReportStrikerPocketed()
     {
+        Debug.LogWarning("[StrikerController:ReportStrikerPocketed] ⚠️ Striker was pocketed! Penalty will apply.");
         _strikerPocketed = true;
     }
 
@@ -201,14 +212,14 @@ public class StrikerController : MonoBehaviour
     {
         _rb.linearVelocity = Vector2.zero;
         _rb.angularVelocity = 0f;
-        // Reposition striker to player's baseline
-        // Player 1 (host): bottom baseline. Player 2: top baseline
-        bool isHost = false; // set from game start data
-        transform.position = isHost ? new Vector3(0, -3.5f, 0) : new Vector3(0, 3.5f, 0);
+        Vector3 pos = _isHost ? new Vector3(0, -3f, 0) : new Vector3(0, 3f, 0);
+        transform.position = pos;
+        Debug.Log($"[StrikerController:ResetStriker] Reset to pos={pos} isHost={_isHost} velocity zeroed");
     }
 
     private void OnDestroy()
     {
+        Debug.Log("[StrikerController:OnDestroy] Unsubscribing from network events");
         if (CarromNetworkManager.Instance != null)
         {
             CarromNetworkManager.Instance.OnGameStart -= OnGameStart;

@@ -1,9 +1,5 @@
 ﻿using UnityEngine;
 
-/// <summary>
-/// Attach to every Carrom piece prefab (black, white, red).
-/// Handles pocket detection and piece type scoring.
-/// </summary>
 [RequireComponent(typeof(Rigidbody2D), typeof(CircleCollider2D))]
 public class CarromPiece : MonoBehaviour
 {
@@ -11,26 +7,48 @@ public class CarromPiece : MonoBehaviour
 
     [Header("Piece Config")]
     public PieceType pieceType;
-    public string pieceId; // Set this to match server IDs (e.g., "black_outer_0")
+    public string pieceId;
 
     [HideInInspector] public bool isPocketed = false;
 
     private Rigidbody2D _rb;
 
-    private void Awake() => _rb = GetComponent<Rigidbody2D>();
+    private void Awake()
+    {
+        _rb = GetComponent<Rigidbody2D>();
+        Debug.Log($"[CarromPiece:Awake] id='{pieceId}' type={pieceType} rb={_rb != null}");
+    }
 
-    /// <summary>Called by PocketTrigger when this piece enters a pocket.</summary>
+    private void Start()
+    {
+        // Log after pieceId may have been set by CarromBoard
+        Debug.Log($"[CarromPiece:Start] id='{pieceId}' type={pieceType} pos={transform.position}");
+        if (string.IsNullOrEmpty(pieceId))
+            Debug.LogWarning($"[CarromPiece:Start] ⚠️ pieceId is EMPTY on {gameObject.name} — was it set by CarromBoard?");
+    }
+
     public void Pocket()
     {
-        if (isPocketed) return;
+        if (isPocketed)
+        {
+            Debug.LogWarning($"[CarromPiece:Pocket] Pocket() called again on already-pocketed piece: {pieceId}");
+            return;
+        }
         isPocketed = true;
+        Debug.Log($"[CarromPiece:Pocket] 🕳️ Pocketing piece: id={pieceId} type={pieceType}");
 
-        // Report to striker controller
-        FindObjectOfType<StrikerController>()?.ReportPiecePocketed(pieceId);
+        var striker = FindObjectOfType<StrikerController>();
+        if (striker != null)
+        {
+            striker.ReportPiecePocketed(pieceId);
+            Debug.Log($"[CarromPiece:Pocket] Reported to StrikerController: {pieceId}");
+        }
+        else
+        {
+            Debug.LogError("[CarromPiece:Pocket] ❌ StrikerController not found in scene! Piece pocketed but not reported.");
+        }
 
-        // Hide piece
         gameObject.SetActive(false);
-
-        Debug.Log($"🕳️ Pocketed: {pieceId} ({pieceType})");
+        Debug.Log($"[CarromPiece:Pocket] GameObject deactivated for piece: {pieceId}");
     }
 }
