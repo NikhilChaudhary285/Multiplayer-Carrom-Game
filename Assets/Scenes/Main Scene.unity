@@ -1018,9 +1018,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4ce6b772c936289419ab0dd651f58a71, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarromBoard
-  blackPiecePrefab: {fileID: 0}
-  whitePiecePrefab: {fileID: 0}
-  redPiecePrefab: {fileID: 0}
+  blackPiecePrefab: {fileID: 5491944685287432092, guid: 627a976b9a924a54fb3265959ad2d963, type: 3}
+  whitePiecePrefab: {fileID: 554440905040432085, guid: 09d0ce15a08d72f4db22d3ed8edda8d7, type: 3}
+  redPiecePrefab: {fileID: 7626462079005330804, guid: afa64fcba88f583469f9650e0cd43b23, type: 3}
   boardSize: 7
 --- !u!1 &1278564690
 GameObject:
