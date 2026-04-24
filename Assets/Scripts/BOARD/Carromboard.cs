@@ -15,7 +15,7 @@ public class CarromBoard : MonoBehaviour
 
     private void Start()
     {
-        Debug.Log("[CarromBoard:Start] Subscribing to network events");
+        Debug.Log("[CarromBoard:Start] Subscribing");
         if (CarromNetworkManager.Instance == null) { Debug.LogError("[CarromBoard:Start] ❌ NetworkManager NULL!"); return; }
         if (blackPiecePrefab == null) Debug.LogError("[CarromBoard:Start] ❌ blackPiecePrefab not assigned!");
         if (whitePiecePrefab == null) Debug.LogError("[CarromBoard:Start] ❌ whitePiecePrefab not assigned!");
@@ -31,8 +31,7 @@ public class CarromBoard : MonoBehaviour
         Debug.Log($"[CarromBoard:OnGameStart] pieces={data.boardState?.pieces?.Count}");
         if (data.boardState == null || data.boardState.pieces == null)
         {
-            Debug.LogError("[CarromBoard:OnGameStart] ❌ boardState or pieces is NULL! Check JSON parsing (Newtonsoft required).");
-            return;
+            Debug.LogError("[CarromBoard:OnGameStart] ❌ boardState NULL — Newtonsoft required!"); return;
         }
         SpawnPieces(data.boardState);
     }
@@ -40,7 +39,7 @@ public class CarromBoard : MonoBehaviour
     private void OnTurnUpdate(TurnUpdateData data)
     {
         Debug.Log($"[CarromBoard:OnTurnUpdate] pieces={data.boardState?.pieces?.Count}");
-        if (data.boardState == null) { Debug.LogWarning("[CarromBoard:OnTurnUpdate] boardState NULL — skipping"); return; }
+        if (data.boardState == null) { Debug.LogWarning("[CarromBoard:OnTurnUpdate] boardState NULL"); return; }
         SyncBoard(data.boardState);
     }
 
@@ -65,24 +64,14 @@ public class CarromBoard : MonoBehaviour
                 "red" => redPiecePrefab,
                 _ => blackPiecePrefab
             };
-
-            if (prefab == null)
-            {
-                Debug.LogError($"[CarromBoard:SpawnPieces] ❌ Null prefab for type={piece.type} id={piece.id}");
-                continue;
-            }
+            if (prefab == null) { Debug.LogError($"[CarromBoard:SpawnPieces] ❌ Null prefab for {piece.type}"); continue; }
 
             var go = Instantiate(prefab, new Vector3(wx, wy, 0), Quaternion.identity, transform);
             var cp = go.GetComponent<CarromPiece>();
             if (cp != null)
             {
                 cp.pieceId = piece.id;
-                cp.pieceType = piece.type switch
-                {
-                    "white" => CarromPiece.PieceType.White,
-                    "red" => CarromPiece.PieceType.Red,
-                    _ => CarromPiece.PieceType.Black
-                };
+                cp.pieceType = piece.type switch { "white" => CarromPiece.PieceType.White, "red" => CarromPiece.PieceType.Red, _ => CarromPiece.PieceType.Black };
                 Debug.Log($"[CarromBoard:SpawnPieces] Spawned {piece.id} ({piece.type}) at ({wx:F2},{wy:F2})");
             }
             else
@@ -93,7 +82,7 @@ public class CarromBoard : MonoBehaviour
             _spawnedPieces[piece.id] = go;
             spawned++;
         }
-        Debug.Log($"[CarromBoard:SpawnPieces] Done — spawned={spawned} skipped={skipped} total={boardState.pieces.Count}");
+        Debug.Log($"[CarromBoard:SpawnPieces] spawned={spawned} skipped={skipped} total={boardState.pieces.Count}");
     }
 
     private void SyncBoard(BoardStateData boardState)
@@ -109,6 +98,43 @@ public class CarromBoard : MonoBehaviour
             }
         }
         Debug.Log($"[CarromBoard:SyncBoard] Deactivated {deactivated} pieces");
+    }
+
+    // ✅ NEW: Called by StrikerController to gather piece positions for broadcast
+    // Returns only active pieces (pocketed ones don't need syncing)
+    public Dictionary<string, Vector2> GetActivePiecePositions()
+    {
+        var result = new Dictionary<string, Vector2>();
+        foreach (var kv in _spawnedPieces)
+        {
+            if (kv.Value != null && kv.Value.activeSelf)
+                result[kv.Key] = kv.Value.transform.position;
+        }
+        return result;
+    }
+
+    // ✅ NEW: Called by StrikerController when it receives opponent's position sync
+    // Moves pieces to the positions the opponent reported
+    public void ApplyPiecePositions(List<PieceSyncData> pieces)
+    {
+        if (pieces == null) return;
+        foreach (var sync in pieces)
+        {
+            if (_spawnedPieces.TryGetValue(sync.id, out var go) && go != null && go.activeSelf)
+            {
+                var rb = go.GetComponent<Rigidbody2D>();
+                if (rb != null)
+                {
+                    // ✅ Use MovePosition for kinematic-friendly teleport that respects physics
+                    // We keep pieces as dynamic but override position from network
+                    rb.MovePosition(new Vector2(sync.x, sync.y));
+                }
+                else
+                {
+                    go.transform.position = new Vector3(sync.x, sync.y, 0f);
+                }
+            }
+        }
     }
 
     private void OnDestroy()
