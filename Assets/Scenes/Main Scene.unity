@@ -5509,8 +5509,10 @@ MonoBehaviour:
   maxPower: 800
   maxDragDistance: 2
   aimLine: {fileID: 989108094}
-  strikerSlideArea: {fileID: 0}
-  boardRef: {fileID: 1060914328}
+  dragClickRadius: 0.35
+  hostBaselineY: -3
+  guestBaselineY: 3
+  strikerBaselineX: 0
 --- !u!1 &1844357983
 GameObject:
   m_ObjectHideFlags: 0
@@ -5555,7 +5557,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 271ecc97ecbbca3488cfa61e777d0b2c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarromNetworkManager
-  serverUrl: http://localhost:3000
+  serverUrl: ws://localhost:3000
 --- !u!1 &1873660418
 GameObject:
   m_ObjectHideFlags: 0

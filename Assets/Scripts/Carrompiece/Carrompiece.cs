@@ -16,39 +16,41 @@ public class CarromPiece : MonoBehaviour
     private void Awake()
     {
         _rb = GetComponent<Rigidbody2D>();
-        Debug.Log($"[CarromPiece:Awake] id='{pieceId}' type={pieceType} rb={_rb != null}");
+        // pieceId is not yet set here (set by CarromBoard after Instantiate)
+        Debug.Log($"[CarromPiece:Awake] type={pieceType} go={gameObject.name}");
     }
 
     private void Start()
     {
-        // Log after pieceId may have been set by CarromBoard
         Debug.Log($"[CarromPiece:Start] id='{pieceId}' type={pieceType} pos={transform.position}");
         if (string.IsNullOrEmpty(pieceId))
-            Debug.LogWarning($"[CarromPiece:Start] ⚠️ pieceId is EMPTY on {gameObject.name} — was it set by CarromBoard?");
+            Debug.LogWarning($"[CarromPiece:Start] ⚠️ pieceId EMPTY on {gameObject.name} — CarromBoard may not have set it yet");
     }
 
     public void Pocket()
     {
         if (isPocketed)
         {
-            Debug.LogWarning($"[CarromPiece:Pocket] Pocket() called again on already-pocketed piece: {pieceId}");
+            Debug.LogWarning($"[CarromPiece:Pocket] Already pocketed: {pieceId} — ignoring duplicate call");
             return;
         }
-        isPocketed = true;
-        Debug.Log($"[CarromPiece:Pocket] 🕳️ Pocketing piece: id={pieceId} type={pieceType}");
 
-        var striker = FindObjectOfType<StrikerController>();
-        if (striker != null)
+        isPocketed = true;
+        Debug.Log($"[CarromPiece:Pocket] 🕳️ id={pieceId} type={pieceType}");
+
+        // ✅ FIX: Use FindObjectsByType (non-deprecated) instead of FindObjectOfType
+        var striker = FindObjectsByType<StrikerController>(FindObjectsSortMode.None);
+        if (striker != null && striker.Length > 0)
         {
-            striker.ReportPiecePocketed(pieceId);
-            Debug.Log($"[CarromPiece:Pocket] Reported to StrikerController: {pieceId}");
+            striker[0].ReportPiecePocketed(pieceId);
+            Debug.Log($"[CarromPiece:Pocket] Reported to StrikerController");
         }
         else
         {
-            Debug.LogError("[CarromPiece:Pocket] ❌ StrikerController not found in scene! Piece pocketed but not reported.");
+            Debug.LogError($"[CarromPiece:Pocket] ❌ No StrikerController in scene! Piece {pieceId} pocketed but not reported.");
         }
 
         gameObject.SetActive(false);
-        Debug.Log($"[CarromPiece:Pocket] GameObject deactivated for piece: {pieceId}");
+        Debug.Log($"[CarromPiece:Pocket] GameObject disabled: {pieceId}");
     }
 }
