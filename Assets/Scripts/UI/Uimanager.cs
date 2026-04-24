@@ -4,6 +4,8 @@ using TMPro;
 
 public class UIManager : MonoBehaviour
 {
+    public static UIManager Instance { get; private set; }
+
     [Header("Lobby Panel")]
     [SerializeField] private GameObject lobbyPanel;
     [SerializeField] private TMP_InputField playerNameInput;
@@ -31,6 +33,20 @@ public class UIManager : MonoBehaviour
     [SerializeField] private TextMeshProUGUI gameOverTitle;
     [SerializeField] private TextMeshProUGUI gameOverMessage;
     [SerializeField] private Button playAgainBtn;
+
+    private void Awake()
+    {
+        Debug.Log("[NetworkManager:Awake] Initializing singleton");
+        if (Instance != null)
+        {
+            Debug.LogWarning("[NetworkManager:Awake] Duplicate — destroying this one");
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+        Debug.Log("[NetworkManager:Awake] ✅ Singleton ready");
+    }
 
     private void Start()
     {
@@ -115,7 +131,7 @@ public class UIManager : MonoBehaviour
 
         myNameText.text = me?.name ?? "You";
         opponentNameText.text = opp?.name ?? "Opponent";
-        potText.text = $"<sprite name=\"coin\"> Pot: {data.betAmount * 2}";
+        potText.text = $"Pot: {data.betAmount * 2}";
         UpdateScores(0, 0);
         SetTurnText(data.currentTurn == myId);
     }
@@ -137,7 +153,7 @@ public class UIManager : MonoBehaviour
         Debug.Log($"[UIManager:OnGameOver] iWon={iWon} winner={data.winnerName} pot={data.totalPot}");
         gameHUD.SetActive(false);
         gameOverPanel.SetActive(true);
-        gameOverTitle.text = iWon ? "🏆 YOU WIN!" : "😔 You Lose";
+        gameOverTitle.text = iWon ? ":) YOU WIN!" : ":( You Lose";
         gameOverMessage.text = data.message;
     }
 
@@ -145,6 +161,9 @@ public class UIManager : MonoBehaviour
     {
         Debug.Log("[UIManager:OnPlayAgain] Reloading scene 0");
         UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+        gameOverPanel.SetActive(false);
+        lobbyPanel.SetActive(true);
+        ResetUI();
     }
 
     private void ShowLobby()
@@ -182,8 +201,36 @@ public class UIManager : MonoBehaviour
     private void SetTurnText(bool isMyTurn)
     {
         if (turnIndicatorText == null) { Debug.LogError("[UIManager:SetTurnText] turnIndicatorText NULL!"); return; }
-        turnIndicatorText.text = isMyTurn ? "🟢 Your Turn" : "⏳ Opponent's Turn";
+        turnIndicatorText.text = isMyTurn ? "Your Turn" : "Opponent's Turn";
         turnIndicatorText.color = isMyTurn ? Color.green : Color.gray;
         Debug.Log($"[UIManager:SetTurnText] isMyTurn={isMyTurn}");
+    }
+
+    private void ResetUI()
+    {
+        #region Lobby Panel Text 
+         playerNameInput.text = "";
+         betAmountInput.text = "";
+         roomCodeInput.text = "";
+         statusText.text = "";
+        #endregion Lobby Panel Text
+
+        #region Waiting Panel Text 
+         roomCodeDisplay.text = "";
+        #endregion Waiting Panel Text 
+
+        #region Game HUD Panel Text 
+         myScoreText.text = "";
+         opponentScoreText.text = "";
+         turnIndicatorText.text = "";
+         myNameText.text = "";
+         opponentNameText.text = "";
+         potText.text = "";
+        #endregion Game HUD Panel Text 
+
+        #region Game Panel Text 
+         gameOverTitle.text = "";
+         gameOverMessage.text = "";
+        #endregion Game Panel Text 
     }
 }
