@@ -1,4 +1,4 @@
-# 🏏 Multiplayer Carrom Game
+# 🪙 Multiplayer Carrom Game
 
 ### Unity Multiplayer • Socket.IO • Real-Time Synchronization
 
